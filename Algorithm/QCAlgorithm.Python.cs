@@ -33,24 +33,14 @@ namespace QuantConnect.Algorithm
 {
     public partial class QCAlgorithm
     {
-        private dynamic _pandas;
+        private PandasConverter _converter;
 
         /// <summary>
-        /// Sets pandas library
+        /// Sets pandas converter
         /// </summary>
         public void SetPandas()
         {
-            try
-            {
-                using (Py.GIL())
-                {
-                    _pandas = Py.Import("pandas");
-                }
-            }
-            catch (PythonException pythonException)
-            {
-                Error("QCAlgorithm.SetPandas(): Failed to import pandas module: " + pythonException);
-            }
+            _converter = new PandasConverter();
         }
 
         /// <summary>
@@ -65,7 +55,7 @@ namespace QuantConnect.Algorithm
         {
             AddData(type, symbol, Resolution.Minute, TimeZones.NewYork, false, 1m);
         }
-        
+
 
         /// <summary>
         /// AddData a new user defined data source, requiring only the minimum config options.
@@ -78,8 +68,7 @@ namespace QuantConnect.Algorithm
         /// <param name="leverage">Custom leverage per security</param>
         public void AddData(PyObject type, string symbol, Resolution resolution, DateTimeZone timeZone, bool fillDataForward = false, decimal leverage = 1.0m)
         {
-            var objectType = CreateType(type.Repr().Split('.')[1].Replace("\'>", ""));
-            AddData(objectType, symbol, resolution, timeZone, fillDataForward, leverage);
+            AddData(CreateType(type), symbol, resolution, timeZone, fillDataForward, leverage);
         }
 
         /// <summary>
@@ -129,7 +118,7 @@ namespace QuantConnect.Algorithm
             var fine = ToFunc<FineFundamental>(pyfine);
             AddUniverse(coarse, fine);
         }
-        
+
         /// <summary>
         /// Registers the consolidator to receive automatic updates as well as configures the indicator to receive updates
         /// from the consolidator.
@@ -335,7 +324,7 @@ namespace QuantConnect.Algorithm
             var symbols = GetSymbolsFromPyObject(tickers);
             if (symbols == null) return null;
 
-            return CreatePandasDataFrame(symbols, History(symbols, periods, resolution));
+            return _converter.GetDataFrame(History(symbols, periods, resolution));
         }
 
         /// <summary>
@@ -350,8 +339,8 @@ namespace QuantConnect.Algorithm
         {
             var symbols = GetSymbolsFromPyObject(tickers);
             if (symbols == null) return null;
-            
-            return CreatePandasDataFrame(symbols, History(symbols, span, resolution));
+
+            return _converter.GetDataFrame(History(symbols, span, resolution));
         }
 
         /// <summary>
@@ -367,74 +356,38 @@ namespace QuantConnect.Algorithm
             var symbols = GetSymbolsFromPyObject(tickers);
             if (symbols == null) return null;
 
-            return CreatePandasDataFrame(symbols, History(symbols, start, end, resolution));
-        }
-
-        /// <summary>
-        /// Creates a pandas DataFrame from an enumerable of slice containing the requested historical data
-        /// </summary>
-        /// <param name="symbols">The symbols to retrieve historical data for</param>
-        /// <param name="history">an enumerable of slice containing the requested historical data</param>
-        /// <returns>A python dictionary with pandas DataFrame containing the requested historical data</returns>
-        private PyObject CreatePandasDataFrame(List<Symbol> symbols, IEnumerable<Slice> history)
-        {
-            // If pandas is null (cound not be imported), return null
-            if (_pandas == null)
-            {
-                return null;
-            }
-
-            using (Py.GIL())
-            {
-                var pyDict = new PyDict();
-
-                foreach (var symbol in symbols)
-                {
-                    var index = Securities[symbol].Type == SecurityType.Equity
-                        ? history.Get<TradeBar>(symbol).Select(x => x.Time)
-                        : history.Get<QuoteBar>(symbol).Select(x => x.Time);
-
-                    var dataframe = new PyDict();
-                    dataframe.SetItem("open", _pandas.Series(history.Get(symbol, Field.Open).ToList(), index));
-                    dataframe.SetItem("high", _pandas.Series(history.Get(symbol, Field.High).ToList(), index));
-                    dataframe.SetItem("low", _pandas.Series(history.Get(symbol, Field.Low).ToList(), index));
-                    dataframe.SetItem("close", _pandas.Series(history.Get(symbol, Field.Close).ToList(), index));
-                    dataframe.SetItem("volume", _pandas.Series(history.Get(symbol, Field.Volume).ToList(), index));
-
-                    pyDict.SetItem(symbol.Value, _pandas.DataFrame(dataframe, columns: new[] { "open", "high", "low", "close", "volume" }.ToList()));
-                }
-
-                return pyDict;
-            }
+            return _converter.GetDataFrame(History(symbols, start, end, resolution));
         }
 
         /// <summary>
         /// Gets the symbols/string from a PyObject
         /// </summary>
         /// <param name="pyObject">PyObject containing symbols</param>
+        /// <param name="isEquity"></param>
         /// <returns>List of symbols</returns>
-        private List<Symbol> GetSymbolsFromPyObject(PyObject pyObject)
+        public List<Symbol> GetSymbolsFromPyObject(PyObject pyObject)
         {
             using (Py.GIL())
             {
-                if (PyString.IsStringType(pyObject))
+                // If not a PyList, convert it into one
+                if (!PyList.IsListType(pyObject))
                 {
-                    Security security;
-                    if (Securities.TryGetValue(pyObject.ToString(), out security))
-                    {
-                        return new List<Symbol> { security.Symbol };
-                    }
-                    return null;
+                    var tmp = new PyList();
+                    tmp.Append(pyObject);
+                    pyObject = tmp;
                 }
 
                 var symbols = new List<Symbol>();
-                foreach (var item in pyObject)
+                foreach (PyObject item in pyObject)
                 {
-                    Security security;
-                    if (Securities.TryGetValue(item.ToString(), out security))
+                    var symbol = (Symbol)item.AsManagedObject(typeof(Symbol));
+
+                    if (string.IsNullOrWhiteSpace(symbol.Value))
                     {
-                        symbols.Add(security.Symbol);
+                        continue;
                     }
+
+                    symbols.Add(symbol);
                 }
                 return symbols.Count == 0 ? null : symbols;
             }
@@ -443,22 +396,26 @@ namespace QuantConnect.Algorithm
         /// <summary>
         /// Creates a type with a given name
         /// </summary>
-        /// <param name="typeName">Name of the new type</param>
+        /// <param name="type">Python object</param>
         /// <returns>Type object</returns>
-        private Type CreateType(string typeName)
+        private Type CreateType(PyObject type)
         {
-            var an = new AssemblyName(typeName);
-            var assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(an, AssemblyBuilderAccess.Run);
-            var moduleBuilder = assemblyBuilder.DefineDynamicModule("MainModule");
-            return moduleBuilder.DefineType(typeName,
-                    TypeAttributes.Public |
-                    TypeAttributes.Class |
-                    TypeAttributes.AutoClass |
-                    TypeAttributes.AnsiClass |
-                    TypeAttributes.BeforeFieldInit |
-                    TypeAttributes.AutoLayout,
-                    typeof(PythonData))
-                .CreateType();
+            using (Py.GIL())
+            {
+                var an = new AssemblyName(type.Repr().Split('.')[1].Replace("\'>", ""));
+                var assemblyBuilder = AppDomain.CurrentDomain.DefineDynamicAssembly(an, AssemblyBuilderAccess.Run);
+                var moduleBuilder = assemblyBuilder.DefineDynamicModule("MainModule");
+                return moduleBuilder.DefineType(an.Name,
+                        TypeAttributes.Public |
+                        TypeAttributes.Class |
+                        TypeAttributes.AutoClass |
+                        TypeAttributes.AnsiClass |
+                        TypeAttributes.BeforeFieldInit |
+                        TypeAttributes.AutoLayout,
+                        // If the type has IsAuthCodeSet member, it is a PythonQuandl
+                        type.HasAttr("IsAuthCodeSet") ? typeof(PythonQuandl) : typeof(PythonData))
+                    .CreateType();
+            }
         }
 
         /// <summary>

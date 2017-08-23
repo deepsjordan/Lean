@@ -11,7 +11,7 @@
     <AssemblyName>QuantConnect.Brokerages</AssemblyName>
     <TargetFrameworkVersion>v4.5.2</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
-    <LangVersion>5</LangVersion>
+    <LangVersion>6</LangVersion>
     <TargetFrameworkProfile />
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
@@ -183,6 +183,9 @@
     <Compile Include="InteractiveBrokers\Client\BarSize.cs" />
     <Compile Include="InteractiveBrokers\Client\HistogramDataEventArgs.cs" />
     <Compile Include="InteractiveBrokers\Client\HeadTimestampEventArgs.cs" />
+    <Compile Include="InteractiveBrokers\Client\PnlSingleEventArgs.cs" />
+    <Compile Include="InteractiveBrokers\Client\PnlEventArgs.cs" />
+    <Compile Include="InteractiveBrokers\Client\MarketRuleEventArgs.cs" />
     <Compile Include="InteractiveBrokers\Client\RerouteMktDepthReqEventArgs.cs" />
     <Compile Include="InteractiveBrokers\Client\RerouteMktDataReqEventArgs.cs" />
     <Compile Include="InteractiveBrokers\Client\HistoricalNewsEndEventArgs.cs" />
@@ -511,7 +514,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="InteractiveBrokers\IB-symbol-map.json">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Include="InteractiveBrokers\run-ib-controller.bat">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -528,6 +531,10 @@
     <ProjectReference Include="..\Common\QuantConnect.csproj">
       <Project>{2545c0b4-fabb-49c9-8dd1-9ad7ee23f86b}</Project>
       <Name>QuantConnect</Name>
+    </ProjectReference>
+    <ProjectReference Include="..\Compression\QuantConnect.Compression.csproj">
+      <Project>{bc3bc77e-0502-43db-a727-b94f9765d74b}</Project>
+      <Name>QuantConnect.Compression</Name>
     </ProjectReference>
     <ProjectReference Include="..\Configuration\QuantConnect.Configuration.csproj">
       <Project>{0AEB4EA3-28C8-476E-89FD-926F06590B4C}</Project>
